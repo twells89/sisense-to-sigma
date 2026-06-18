@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "sisense-to-sigma",
+  "displayName": "Sisense → Sigma",
+  "version": "0.1.0",
+  "description": "Migrate Sisense to Sigma — ElastiCube / Live data models → Sigma data model, and Sisense dashboards (widgets) → Sigma workbook. Pulls live over the Sisense REST API (datamodel schema export, dashboards + widget JAQL), translates JAQL formulas to Sigma formulas, maps widget types (pivot→pivot-table, indicator→KPI, chart→chart, filters→controls), and verifies data parity by running JAQL against Sisense and comparing to the Sigma query. Honors the sibling converters' 'flag, never fake' contract: custom JAQL functions, blox/widget plugins, scripted dashboards, and unsupported viz are surfaced as loud flags rather than silently mis-converted. Includes a read-only estate assessment. Companion to the sigma-migration-skills converters.",
+  "author": { "name": "Thomas Wells" },
+  "license": "MIT",
+  "keywords": ["sisense", "elasticube", "jaql", "sigma", "migration", "bi", "converter", "assessment"],
+  "skills": "./skills/"
+}
