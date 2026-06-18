@@ -12,7 +12,7 @@ dashboard: dashboard widgets -> Sigma workbook spec; widget type -> element,
            panel JAQL -> column formulas via jaql_expr. Unmapped widgets/JAQL are
            FLAGGED (kind:"flagged") not faked.
 """
-import json, sys, re
+import json, sys, re, os
 import jaql_expr as J
 
 # Sisense type code -> Sigma column type
@@ -90,8 +90,56 @@ def _ec_sql_aliased(expr, declared, database, schema):
         aliased.append(f'{base} AS "{name}"')
     return sql[:m.start(1)] + ", ".join(aliased) + sql[m.end(1):], True
 
+def probe_directions(model, schema, database, snow_conn):
+    """Probe warehouse cardinality to resolve relationship direction accurately:
+    the one-side (dimension/target) is the side whose join column is UNIQUE.
+    Returns {frozenset({(table,col),...}): fact_table_name}. Tables not in the
+    warehouse (e.g. derived custom-SQL) are skipped → caller falls back+flags."""
+    import subprocess
+    colref = {}
+    for ds in model["datasets"]:
+        for t in ds["schema"]["tables"]:
+            for c in t["columns"]:
+                colref[(t["oid"], c["oid"])] = (t["name"], c["name"])
+    derived = {t["name"] for ds in model["datasets"] for t in ds["schema"]["tables"]
+               if (t.get("expression") or {}).get("expression")}
+    pairs = set()
+    for r in model.get("relations", []):
+        cc = r["columns"]
+        if len(cc) == 2:
+            for cell in cc:
+                ref = colref.get((cell["table"], cell["column"]))
+                if ref and ref[0] not in derived:
+                    pairs.add(ref)
+    uniq = {}
+    for table, col in pairs:
+        q = (f'SELECT COUNT(*)=COUNT(DISTINCT "{col}") FROM '
+             f'{database}.{schema}."{table.upper()}"')
+        out = subprocess.run(["snow", "sql", "-c", snow_conn, "--format", "json", "-q", q],
+                             capture_output=True, text=True,
+                             env={**os.environ, "PATH": "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")})
+        try:
+            uniq[(table, col)] = list(json.loads(out.stdout)[0].values())[0] in (True, "true", 1)
+        except Exception:
+            uniq[(table, col)] = None
+    directions = {}
+    for r in model.get("relations", []):
+        cc = r["columns"]
+        if len(cc) != 2:
+            continue
+        a = colref.get((cc[0]["table"], cc[0]["column"]))
+        b = colref.get((cc[1]["table"], cc[1]["column"]))
+        if not a or not b:
+            continue
+        ua, ub = uniq.get(a), uniq.get(b)
+        if ua and not ub:
+            directions[frozenset({a, b})] = b[0]   # a is unique → a=dim, b=fact
+        elif ub and not ua:
+            directions[frozenset({a, b})] = a[0]
+    return directions
+
 def convert_model(model, connection_id, schema="SISENSE_ECOMMERCE",
-                  database="CSA", name=None):
+                  database="CSA", name=None, directions=None):
     """Sisense Live/ElastiCube model export -> (Sigma DM spec, flags).
     Plain tables -> warehouse-table elements (source = connectionId + path).
     Tables with an `expression` (ElastiCube custom SQL) -> custom-SQL ('sql')
@@ -147,8 +195,16 @@ def convert_model(model, connection_id, schema="SISENSE_ECOMMERCE",
         if not a or not b:
             continue
         (ft, fc), (tt, tc) = (a, b)
-        if len(by_lower[a[0].lower()]["columns"]) < len(by_lower[b[0].lower()]["columns"]):
-            (ft, fc), (tt, tc) = b, a   # fact = the wider table
+        fact_by_card = (directions or {}).get(frozenset({a, b}))
+        if fact_by_card:                       # cardinality-resolved (accurate)
+            if fact_by_card == b[0]:
+                (ft, fc), (tt, tc) = b, a
+        else:                                  # heuristic fallback: wider = fact
+            if len(by_lower[a[0].lower()]["columns"]) < len(by_lower[b[0].lower()]["columns"]):
+                (ft, fc), (tt, tc) = b, a
+            flags.append({"relation": f"{a[0]}.{a[1]} <-> {b[0]}.{b[1]}",
+                          "reason": f"join direction set by width heuristic (fact={ft}); "
+                          "verify many-side — run with --verify-card to resolve by cardinality"})
         for e in elements:
             if e["id"] == el_id[ft]:
                 e.setdefault("relationships", []).append({
@@ -373,15 +429,22 @@ if __name__ == "__main__":
     if cmd == "model":
         # model <model.json> <connectionId> [schema] [database]
         model = json.load(open(sys.argv[2])); connection_id = sys.argv[3]
-        schema = sys.argv[4] if len(sys.argv) > 4 else "SISENSE_ECOMMERCE"
-        database = sys.argv[5] if len(sys.argv) > 5 else "CSA"
-        spec, flags = convert_model(model, connection_id, schema, database)
+        args = [a for a in sys.argv[4:] if not a.startswith("--")]
+        schema = args[0] if len(args) > 0 else "SISENSE_ECOMMERCE"
+        database = args[1] if len(args) > 1 else "CSA"
+        directions = None
+        if "--verify-card" in sys.argv:
+            conn = sys.argv[sys.argv.index("--verify-card") + 1]
+            directions = probe_directions(model, schema, database, conn)
+            print(f"cardinality-resolved {len(directions)} relationship directions")
+        spec, flags = convert_model(model, connection_id, schema, database, directions=directions)
         json.dump(spec, open("sigma_dm_spec.json", "w"), indent=2)
         print(f"wrote sigma_dm_spec.json ({len(spec['pages'][0]['elements'])} elements)")
         if flags:
             print("FLAGS (not faked):")
             for f in flags:
-                print(f"  - {f['table']}: {f['reason']}")
+                subj = f.get("table") or f.get("relation") or "?"
+                print(f"  - {subj}: {f['reason']}")
     elif cmd == "classify":
         d = json.load(open(sys.argv[2]))
         rows = classify_dashboard(d)

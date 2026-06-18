@@ -27,7 +27,14 @@ ok("model: all warehouse-table (no custom-sql in ecommerce)",
    all(e["source"]["kind"] == "warehouse-table" for e in els))
 ok("model: 3 relationships on fact", sum(len(e.get("relationships", [])) for e in els) == 3)
 ok("model: fact element is last (after dims)", els[-1].get("relationships"))
-ok("model: no flags for clean star schema", flags == [])
+ok("model: clean star has only direction-heuristic flags (no custom-SQL/errors)",
+   all("join direction" in f["reason"] for f in flags))
+# with cardinality directions supplied, no flags at all
+spec2, flags2 = C.convert_model(model, CONN, "SISENSE_ECOMMERCE", "CSA",
+   directions={frozenset({("Commerce","Country ID"),("Country","Country ID")}):"Commerce",
+               frozenset({("Commerce","Category ID"),("Category","Category ID")}):"Commerce",
+               frozenset({("Commerce","Brand ID"),("Brand","Brand ID")}):"Commerce"})
+ok("model: cardinality-resolved directions -> no flags", flags2 == [])
 ok("model: warehouse path uses db+schema+TABLE",
    els[0]["source"]["path"][:2] == ["CSA", "SISENSE_ECOMMERCE"])
 ok("model: column formula prefix is phys table",
