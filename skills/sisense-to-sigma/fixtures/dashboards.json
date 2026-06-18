@@ -16,7 +16,7 @@
     "userId": "6a32fb475397399ec0a31c8f",
     "tenantId": "6a32fb475397399ec0a31c9c",
     "created": "2026-06-18T00:48:14.234Z",
-    "lastUpdated": "2026-06-18T01:02:55.342Z",
+    "lastUpdated": "2026-06-18T13:20:07.788Z",
     "layout": {
       "type": "columnar",
       "columns": [
@@ -149,7 +149,7 @@
     },
     "instanceType": "owner",
     "dataExploration": true,
-    "lastOpened": "2026-06-18T01:02:55.342Z",
+    "lastOpened": "2026-06-18T13:01:51.313Z",
     "previewLayout": [],
     "datasource": {
       "address": "LocalHost",
@@ -162,6 +162,38 @@
     "settings": {
       "autoUpdateOnFiltersChange": true
     },
+    "filters": [
+      {
+        "jaql": {
+          "dim": "[Commerce.Gender]",
+          "table": "Commerce",
+          "column": "Gender",
+          "datatype": "text",
+          "title": "Gender",
+          "filter": {
+            "members": [
+              "Male",
+              "Female"
+            ]
+          }
+        }
+      },
+      {
+        "jaql": {
+          "dim": "[Country.Country]",
+          "table": "Country",
+          "column": "Country",
+          "datatype": "text",
+          "title": "Country",
+          "filter": {
+            "members": [
+              "United States",
+              "Canada"
+            ]
+          }
+        }
+      }
+    ],
     "widgets": [
       {
         "_id": "6a33406e17884480503a9e38",

@@ -224,7 +224,7 @@ def convert_dashboard(dashboards, model, dm_info):
     cid = lambda: _sid(8)
 
     # collect referenced (table, col) across all widgets -> Master columns
-    master_cols, master_seen, name_for = [], {}, {}
+    master_cols, master_seen, master_idx, name_for = [], {}, {}, {}
     def master_ref(table, col):
         key = (table, col)
         if key in master_seen:
@@ -234,20 +234,22 @@ def convert_dashboard(dashboards, model, dm_info):
         mid = "m_" + cid()
         formula = (f"[{fact_name}/{col}]" if table == fact
                    else f"[{fact_name}/{table.upper()}/{col}]")
-        col_spec = {"id": mid, "formula": formula, "name": disp}
-        master_cols.append(col_spec)
-        master_seen[key] = disp  # viz refs use [Master/disp]
+        master_cols.append({"id": mid, "formula": formula, "name": disp})
+        master_seen[key] = disp        # viz refs use [Master/disp]
+        master_idx[key] = mid          # control bindings use the column id
         return disp
 
-    flags = []
-    viz_elements = []
+    flags, viz_elements, controls = [], [], []
     for d in dashboards:
-        # dashboard-level filters -> surface (not silently dropped). Emitting them
-        # as Sigma controls is a follow-up; for now flag each so it's handled.
+        # dashboard-level filters -> real Sigma controls bound to the Master
         for fl in (d.get("filters") or []):
-            jq = (fl.get("jaql") or {})
-            flags.append({"dashboard": d.get("title"), "filter": jq.get("title") or jq.get("dim"),
-                          "reason": "dashboard filter — recreate as a Sigma control/element filter"})
+            ctrl = _emit_control(fl, master_ref, master_idx, cid)
+            if ctrl:
+                controls.append(ctrl)
+            else:
+                jq = (fl.get("jaql") or {})
+                flags.append({"dashboard": d.get("title"), "filter": jq.get("title") or jq.get("dim"),
+                              "reason": "dashboard filter not auto-convertible — recreate manually"})
         for w in d.get("widgets", []):
             wt = w.get("type")
             kind = SIGMA_KIND.get(wt)
@@ -289,8 +291,40 @@ def convert_dashboard(dashboards, model, dm_info):
               "order": [c["id"] for c in master_cols], "visibleAsSource": True}
     spec = {"name": "ECommerce Overview (from Sisense)", "schemaVersion": 1,
             "pages": [{"id": "pdata", "name": "Data", "elements": [master]},
-                      {"id": "pmain", "name": "Overview", "elements": viz_elements}]}
+                      {"id": "pmain", "name": "Overview", "elements": controls + viz_elements}]}
     return spec, flags
+
+def _emit_control(fl, master_ref, master_idx, cid):
+    """Sisense dashboard filter -> a Sigma control bound to the Master column it
+    filters (the control propagates to every viz sourced from Master)."""
+    jq = (fl.get("jaql") or {})
+    dim = jq.get("dim")
+    m = re.match(r"\[([^.\]]+)\.([^\]]+)\]", dim or "")
+    if not m:
+        return None
+    table, col = m.group(1), m.group(2)
+    master_ref(table, col)                       # ensure the column is on Master
+    col_id = master_idx[(table, col)]
+    bind = {"source": {"kind": "table", "elementId": "master"}, "columnId": col_id}
+    name = jq.get("title") or col
+    flt = jq.get("filter") or {}
+    base = {"kind": "control", "id": "ctrl_" + cid(), "controlId": re.sub(r"\W+", "", name) or ("F" + cid()),
+            "name": name, "filters": [bind]}
+    dt = jq.get("datatype") or jq.get("dimType")
+    if "members" in flt or "explicit" in flt or jq.get("level") in (None,) and dt in ("text", None):
+        # member list filter (most common)
+        vals = flt.get("members") or (flt.get("explicit", {}) or {}).get("members") or []
+        return {**base, "controlType": "list", "mode": "exclude" if flt.get("exclude") else "include",
+                "selectionMode": "multiple", "values": vals,
+                "source": {"kind": "source", "source": {"kind": "table", "elementId": "master"}, "columnId": col_id}}
+    if jq.get("level") or dt in ("datetime", "date"):
+        return {**base, "controlType": "date-range", "mode": "between",
+                "includeNulls": "when-no-value-is-selected"}
+    if dt in ("numeric", "number"):
+        return {**base, "controlType": "number-range", "mode": "between", "values": []}
+    # default to a list control
+    return {**base, "controlType": "list", "mode": "include", "selectionMode": "multiple", "values": [],
+            "source": {"kind": "source", "source": {"kind": "table", "elementId": "master"}, "columnId": col_id}}
 
 def _emit_viz(kind, title, dims, meas):
     cols = [s for _, s, _ in dims] + [s for _, s, _ in meas]

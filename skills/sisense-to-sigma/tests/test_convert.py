@@ -37,7 +37,9 @@ ok("model: column formula prefix is phys table",
 dm_info = {"dataModelId": "dm-x", "factElementId": "fact-x", "factName": "Commerce"}
 wb, dflags = C.convert_dashboard(
     [d for d in dashboards if d.get("title") == "ECommerce Overview (Live)"], model, dm_info)
-viz = wb["pages"][1]["elements"]
+page_els = wb["pages"][1]["elements"]
+controls = [e for e in page_els if e["kind"] == "control"]
+viz = [e for e in page_els if e["kind"] != "control"]
 kinds = [e["kind"] for e in viz]
 ok("wb: master data element present", wb["pages"][0]["elements"][0]["id"] == "master")
 ok("wb: 6 viz elements", len(viz) == 6)
@@ -45,6 +47,8 @@ ok("wb: has kpi-chart", "kpi-chart" in kinds)
 ok("wb: has bar-chart", "bar-chart" in kinds)
 ok("wb: has line-chart", "line-chart" in kinds)
 ok("wb: has pie-chart", "pie-chart" in kinds)
+ok("wb: dashboard filters -> controls", len(controls) == 2 and all(c["controlType"]=="list" for c in controls))
+ok("wb: control bound to master + has default values", controls[0]["filters"][0]["source"]["elementId"]=="master" and controls[0]["values"])
 ok("wb: viz source the master", all(e["source"]["elementId"] == "master" for e in viz))
 ok("wb: master cols are cross-ref or own (no bare warehouse path)",
    all("formula" in c for c in wb["pages"][0]["elements"][0]["columns"]))
