@@ -57,6 +57,39 @@ def _translate_ec_sql(sql, database, schema):
                  lambda m: f'"{m.group(1).upper()}"."{m.group(2)}"', sql)
     return sql
 
+def _split_top_commas(s):
+    """Split a SQL projection list on top-level commas (respecting parens)."""
+    parts, depth, cur = [], 0, ""
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur); cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur)
+    return parts
+
+def _ec_sql_aliased(expr, declared, database, schema):
+    """Translate ElastiCube SQL AND alias each SELECT output to the declared
+    column name (quoted) so the warehouse output columns match the element's
+    column formulas exactly (Snowflake uppercases unquoted aliases otherwise)."""
+    sql = _translate_ec_sql(expr, database, schema)
+    m = re.match(r"\s*SELECT\s+(.*?)\s+FROM\s", sql, re.S | re.I)
+    if not m:
+        return sql, False  # couldn't parse projection — leave as-is, flag harder
+    proj = _split_top_commas(m.group(1))
+    if len(proj) != len(declared):
+        return sql, False
+    aliased = []
+    for part, name in zip(proj, declared):
+        base = re.sub(r'\s+AS\s+("?[\w]+"?)\s*$', "", part.strip(), flags=re.I)
+        aliased.append(f'{base} AS "{name}"')
+    return sql[:m.start(1)] + ", ".join(aliased) + sql[m.end(1):], True
+
 def convert_model(model, connection_id, schema="SISENSE_ECOMMERCE",
                   database="CSA", name=None):
     """Sisense Live/ElastiCube model export -> (Sigma DM spec, flags).
@@ -75,18 +108,23 @@ def convert_model(model, connection_id, schema="SISENSE_ECOMMERCE",
         for c in t["columns"]:
             cid = _sid()
             col_id[(t["name"], c["name"])] = cid
-            # sql-source columns prefix on the element name; warehouse on phys table
-            prefix = t["name"] if expr else t["name"].upper()
-            cols.append({"id": cid, "formula": f'[{prefix}/{c["name"]}]', "name": c["name"]})
+            # warehouse-table cols prefix on the physical table; SQL-source cols
+            # use the fixed 'Custom SQL' prefix ([Custom SQL/OutputCol]) — NOT the
+            # element name (which gives "dependency not found") nor bare (circular)
+            formula = f'[Custom SQL/{c["name"]}]' if expr else f'[{t["name"].upper()}/{c["name"]}]'
+            cols.append({"id": cid, "formula": formula, "name": c["name"]})
         if expr:
+            stmt, aliased = _ec_sql_aliased(expr, [c["name"] for c in t["columns"]],
+                                            database, schema)
             elements.append({"id": eid, "kind": "table",
                              "source": {"kind": "sql", "connectionId": connection_id,
-                                        "sql": _translate_ec_sql(expr, database, schema)},
+                                        "statement": stmt},
                              "columns": cols, "name": t["name"],
                              "order": [c["id"] for c in cols]})
             flags.append({"table": t["name"], "reason": "ElastiCube custom-SQL table — "
                           "emitted as a Sigma SQL element with a best-effort dialect "
-                          "translation; VERIFY the SQL runs on the warehouse",
+                          "translation" + ("" if aliased else " (column aliasing failed — review)") +
+                          "; VERIFY the SQL runs on the warehouse",
                           "original_sql": expr})
         else:
             elements.append({"id": eid, "kind": "table",

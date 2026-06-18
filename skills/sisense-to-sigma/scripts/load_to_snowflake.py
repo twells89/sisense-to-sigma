@@ -70,6 +70,11 @@ def main():
     tables = []
     for ds in model["datasets"]:
         for t in ds.get("schema", {}).get("tables", []):
+            # skip custom-SQL / derived tables — the Sigma DM recomputes those as
+            # SQL elements over the base tables (don't materialize them here)
+            if (t.get("expression") or {}).get("expression"):
+                print(f"  skip (custom-SQL, computed in Sigma): {t['name']}")
+                continue
             tables.append(t)
 
     for t in tables:
