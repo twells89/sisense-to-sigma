@@ -17,19 +17,27 @@ breakdown all match Sisense JAQL). Built and tested:
 - Offline regression: `tests/test_jaql.py` (19) + `tests/test_convert.py` (17)
   against bundled `fixtures/`. ✅
 
-### Known limitations (before unattended customer production)
-- **Full live round-trip validated on ECommerce only.** Converter is hardened
-  against Healthcare (custom-SQL) + Retail (more joins) structurally, but those
-  weren't landed in Snowflake + parity-run end-to-end.
-- **Dashboard filters → controls**: detected and **flagged**, not yet emitted as
-  Sigma controls. Widget-level filters beyond top-N likewise.
-- **pie-chart**: emitted as `pie-chart` with `{id}` refs (this org's API);
-  donut/holeValue variants untested.
-- **Multi-fact / snowflake schemas**: fact = widest table (heuristic); multi-fact
-  models may need manual relationship review.
-- **Conditional formatting, drill, RLS/data security**: not converted.
-- ElastiCube custom-SQL translation is **best-effort + flagged** — verify the SQL
-  runs on the warehouse (Sisense dialect functions may differ).
+### Gaps closed (2026-06-18)
+- **Two live round-trips at exact parity.** ECommerce (clean star) AND Healthcare
+  (8 tables, snowflake schema, a custom-SQL derived table) both landed in
+  Snowflake + DM-parity-verified end-to-end.
+- **Custom-SQL tables convert and run.** ElastiCube SQL → Sigma `sql` element
+  (`statement` field, `[Custom SQL/Col]` formula prefix, quoted output aliases);
+  Healthcare's "Conditions time of stay" matches Sisense exactly (still flagged
+  for human SQL verification — dialect functions may differ).
+- **Dashboard filters → Sigma controls.** Member/date/numeric filters become
+  list/date-range/number-range controls bound to the Master, with default
+  selections carried; validated (filtered total = $3,735,431.72, exact).
+- **Relationship direction is cardinality-accurate** via `--verify-card`
+  (unique-key side = dimension); snowflake schemas handled; width fallback now
+  flags each relation for verification. No fanout (Admissions stays 5000).
+
+### Remaining limitations (smaller)
+- Widget-level filters beyond top-N, conditional formatting, drill, RLS/data
+  security: not converted.
+- `--verify-card` needs the base data already in the warehouse; derived/custom-SQL
+  tables can't be probed (their relations fall back to the flagged width heuristic).
+- pie emitted as `pie-chart` with `{id}` refs (this org's API); donut/holeValue untested.
 
 ## Architecture (phases, mirroring the sibling converters)
 
