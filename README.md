@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+> **This repository has moved and is no longer maintained here.**
+> The `sisense-to-sigma` skill now lives in the consolidated monorepo:
+> **https://github.com/twells89/sigma-migration-skills** → `plugins/sisense-to-sigma/`
+> This standalone repo is archived (read-only) and kept for reference only.
+
 # sisense-to-sigma
 
 Claude Code plugin for migrating **Sisense** (ElastiCube / Live data models +
